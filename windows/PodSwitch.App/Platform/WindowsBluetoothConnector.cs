@@ -58,7 +58,8 @@ internal sealed class WindowsBluetoothConnector : IBluetoothHandoff
     {
         var info = FindPairedDevice(normalizedAddress);
         if (info is null) return false;
-        if (info.Value.fConnected == 0 && !IsActiveOutput(normalizedAddress)) return true;
+        var deviceName = info.Value.szName;
+        if (!IsAudioEndpointAvailable(deviceName) && !IsActiveOutput(normalizedAddress)) return true;
 
         var device = info.Value;
         _ = SetService(ref device, HandsFree, ServiceDisable);
@@ -70,8 +71,7 @@ internal sealed class WindowsBluetoothConnector : IBluetoothHandoff
             cancellationToken.ThrowIfCancellationRequested();
             Thread.Sleep(PollIntervalMs);
             waited += PollIntervalMs;
-            var current = FindPairedDevice(normalizedAddress);
-            if (current is not null && current.Value.fConnected == 0 && !IsActiveOutput(normalizedAddress))
+            if (!IsAudioEndpointAvailable(deviceName) && !IsActiveOutput(normalizedAddress))
                 return true;
         }
         return false;
@@ -173,6 +173,22 @@ internal sealed class WindowsBluetoothConnector : IBluetoothHandoff
             } while (BluetoothFindNextDevice(handle, ref info));
         }
         finally { BluetoothFindDeviceClose(handle); }
+    }
+
+    private bool IsAudioEndpointAvailable(string deviceName)
+    {
+        try
+        {
+            foreach (var endpoint in _audio.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+            {
+                using (endpoint)
+                {
+                    if (EndpointMatches(endpoint.FriendlyName, deviceName)) return true;
+                }
+            }
+        }
+        catch { }
+        return false;
     }
 
     private bool IsDefaultRenderEndpoint(string deviceName)
