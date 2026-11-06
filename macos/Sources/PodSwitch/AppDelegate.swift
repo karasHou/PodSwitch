@@ -239,6 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshPeerServer() {
+        peerServer.stop()
         let peer = settings.peerSettings
         if peer.enabled && !peer.token.isEmpty {
             peerServer.start(port: peer.port)

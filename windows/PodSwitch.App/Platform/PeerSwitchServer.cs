@@ -115,8 +115,21 @@ internal sealed class PeerSwitchServer : IDisposable
 
                 if (method == "POST" && path == "/api/release")
                 {
-                    var released = await _releaseHandler().WaitAsync(TimeSpan.FromSeconds(12), cancellationToken).ConfigureAwait(false);
-                    await RespondAsync(stream, released ? 200 : 409, released, cancellationToken).ConfigureAwait(false);
+                    if (!await _releaseGate.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+                    {
+                        await RespondAsync(stream, 409, false, cancellationToken).ConfigureAwait(false);
+                        return;
+                    }
+
+                    try
+                    {
+                        var released = await _releaseHandler().WaitAsync(TimeSpan.FromSeconds(12), cancellationToken).ConfigureAwait(false);
+                        await RespondAsync(stream, released ? 200 : 409, released, cancellationToken).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _releaseGate.Release();
+                    }
                     return;
                 }
 
