@@ -66,7 +66,6 @@ public final class PeerSwitchServer {
     }
 
     private func handle(_ data: Data, connection: NWConnection) async {
-        defer { connection.cancel() }
         guard let request = String(data: data, encoding: .utf8) else {
             send(status: "400 Bad Request", success: false, on: connection)
             return
