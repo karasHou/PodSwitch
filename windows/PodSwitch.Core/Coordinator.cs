@@ -5,7 +5,7 @@ public sealed class Coordinator
 {
     private readonly ISettingsStore _settings;
     private readonly IBluetoothConnector _connector;
-    private readonly IPeerSwitching _peer;
+    private readonly IPeerSwitching? _peer;
     private readonly INotifier _notifier;
     private bool _notificationPending;
     private int _switchInProgress;
@@ -15,7 +15,7 @@ public sealed class Coordinator
         _settings = settings;
         _connector = connector;
         _notifier = notifier;
-        _peer = peer ?? new PeerSwitchClient();
+        _peer = peer;
     }
 
     public void Handle(SwitchEvent ev)
@@ -71,7 +71,7 @@ public sealed class Coordinator
                 return;
             }
 
-            var released = await _peer.ReleasePeerAsync(peerSettings.Host, peerSettings.Port, peerSettings.Token).ConfigureAwait(false);
+            var released = _peer is not null && await _peer.ReleasePeerAsync(peerSettings.Host, peerSettings.Port, peerSettings.Token).ConfigureAwait(false);
             if (!released)
             {
                 ShowFailure("Peer did not confirm headphone release. Switching cancelled.");
