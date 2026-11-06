@@ -1,0 +1,67 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main, "feature/**"]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode toolchain
+        run: xcode-select -p
+      - name: Test
+        run: swift test --package-path macos
+      - name: Package
+        run: |
+          cd macos
+          ./Scripts/package.sh
+          ditto -c -k --sequesterRsrc --keepParent build/PodSwitch.app ../PodSwitch-macos-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PodSwitch-macos-arm64
+          path: PodSwitch-macos-arm64.zip
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Test
+        run: dotnet test windows/PodSwitch.sln --configuration Release
+      - name: Publish
+        run: dotnet publish windows/PodSwitch.App/PodSwitch.App.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/windows-x64
+      - name: Archive
+        run: Compress-Archive -Path publish/windows-x64/* -DestinationPath PodSwitch-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PodSwitch-windows-x64
+          path: PodSwitch-windows-x64.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/PodSwitch-macos-arm64/PodSwitch-macos-arm64.zip
+            dist/PodSwitch-windows-x64/PodSwitch-windows-x64.zip
+          generate_release_notes: true
