@@ -66,10 +66,15 @@ public final class Coordinator: AudioMonitorDelegate {
     }
 
     private func performConnect(config: Config) {
-        guard !switchInProgress, let target = config.targetDeviceId else { return }
-        switchInProgress = true
+        guard let target = config.targetDeviceId else { return }
         notificationPending = false
         let peerSettings = (settings as? any PeerSettingsProviding)?.peerSettings ?? PeerSettings()
+        guard peerSettings.enabled else {
+            bluetooth.connect(deviceId: target)
+            return
+        }
+        guard !switchInProgress else { return }
+        switchInProgress = true
 
         Task { @MainActor [weak self] in
             guard let self else { return }
