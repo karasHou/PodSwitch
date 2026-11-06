@@ -20,7 +20,7 @@ internal sealed class TrayApp : ApplicationContext
         _ = _uiAnchor.Handle;
         _tray = new NotifyIcon { Icon = LoadTrayIcon(), Visible = true, Text = "PodSwitch" };
         _notifier = new TrayNotifier(_tray);
-        _coordinator = new Coordinator(_settings, _bluetooth, _notifier);
+        _coordinator = new Coordinator(_settings, _bluetooth, _notifier, new PeerSwitchClient());
         _notifier.AcceptRequested += () => _coordinator.Handle(new SwitchEvent.UserAcceptedSwitch());
 
         _peerServer = new PeerSwitchServer(
