@@ -214,3 +214,12 @@ PodSwitch in another project, a mention or link back is genuinely appreciated
 
 Designed and implemented with the help of an **AI coding assistant**. Built out of
 necessity, shared in case it helps someone else.
+
+
+## Cross-device switching (Tailscale)
+
+This fork adds an optional peer-to-peer hand-off mode for single-connection Bluetooth headphones such as the Sony WH-1000XM3. Each computer runs a small authenticated HTTP endpoint bound to its Tailscale IPv4 address. Before connecting locally, PodSwitch asks the other computer to release the headphones and waits for confirmation.
+
+See [Tailscale setup and troubleshooting](docs/TAILSCALE-SETUP.md) for MagicDNS, shared-token, firewall, and verification steps.
+
+The feature is optional. With cross-device switching disabled, the original single-device PodSwitch behaviour remains in place.

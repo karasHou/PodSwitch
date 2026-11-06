@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, let target = self.settings.config.targetDeviceId else { return false }
             return await self.bluetooth.disconnectAndWait(deviceId: target)
         }
+        peerServer.onStateChange = { [weak self] in self?.rebuildMenu() }
         refreshPeerServer()
         notifier.onAccept = { [weak self] in self?.coordinator.handle(.userAcceptedSwitch) }
 
@@ -94,6 +95,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let peerItem = NSMenuItem(title: "Cross-device settings…", action: #selector(showPeerSettings), keyEquivalent: "")
         peerItem.target = self
         menu.addItem(peerItem)
+        let peerStatus = NSMenuItem(
+            title: peerServer.isRunning ? "Peer service: listening" : "Peer service: unavailable",
+            action: nil,
+            keyEquivalent: ""
+        )
+        peerStatus.isEnabled = false
+        menu.addItem(peerStatus)
 
         let quit = NSMenuItem(title: "Quit PodSwitch", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -133,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let current = settings.peerSettings
         let alert = NSAlert()
         alert.messageText = "Cross-device switching"
-        alert.informativeText = "Enable Tailscale on both computers. Enter the other computer's MagicDNS name and use the same token on both devices. Port 8765 is the default."
+        alert.informativeText = "Enable MagicDNS in Tailscale Admin → DNS, then enter the other computer's full .ts.net name. Use the same token on both computers. Keep port 8765 on both devices. Local peer service: \(peerServer.isRunning ? "listening" : "not listening")."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Test connection")
         alert.addButton(withTitle: "Cancel")

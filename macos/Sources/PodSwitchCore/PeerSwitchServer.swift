@@ -10,6 +10,8 @@ public final class PeerSwitchServer {
     private let releaseHandler: () async -> Bool
     public private(set) var isRunning = false
     public private(set) var lastError: String?
+    public var onStateChange: (() -> Void)?
+    private var releaseInProgress = false
 
     public init(tokenProvider: @escaping () -> String, releaseHandler: @escaping () async -> Bool) {
         self.tokenProvider = tokenProvider
@@ -42,11 +44,14 @@ public final class PeerSwitchServer {
                     case .ready:
                         self?.isRunning = true
                         self?.lastError = nil
+                        self?.onStateChange?()
                     case .failed(let error):
                         self?.isRunning = false
                         self?.lastError = error.localizedDescription
+                        self?.onStateChange?()
                     case .cancelled:
                         self?.isRunning = false
+                        self?.onStateChange?()
                     default:
                         break
                     }
@@ -94,7 +99,13 @@ public final class PeerSwitchServer {
         }
 
         if method == "POST", path == "/api/release" {
+            guard !releaseInProgress else {
+                send(status: "409 Conflict", success: false, on: connection)
+                return
+            }
+            releaseInProgress = true
             let released = await releaseHandler()
+            releaseInProgress = false
             send(status: released ? "200 OK" : "409 Conflict", success: released, on: connection)
             return
         }

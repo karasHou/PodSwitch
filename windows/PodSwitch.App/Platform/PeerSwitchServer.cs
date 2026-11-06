@@ -12,6 +12,7 @@ internal sealed class PeerSwitchServer : IDisposable
     private readonly Func<Task<bool>> _releaseHandler;
     private TcpListener? _listener;
     private CancellationTokenSource? _stop;
+    private readonly SemaphoreSlim _releaseGate = new(1, 1);
     public bool IsRunning { get; private set; }
     public string? LastError { get; private set; }
 

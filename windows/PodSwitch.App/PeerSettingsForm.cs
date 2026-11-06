@@ -11,7 +11,8 @@ internal sealed class PeerSettingsForm : Form
     private readonly TextBox _host = new() { PlaceholderText = "macbook.example.ts.net", Dock = DockStyle.Fill };
     private readonly NumericUpDown _port = new() { Minimum = 1, Maximum = 65535, Value = 8765, Width = 110 };
     private readonly TextBox _token = new() { UseSystemPasswordChar = true, Dock = DockStyle.Fill };
-    private readonly Label _status = new() { AutoSize = true, Text = "Enter the peer MagicDNS name and shared token." };
+    private readonly Label _help = new() { AutoSize = true, MaximumSize = new Size(420, 0), Text = "MagicDNS: Tailscale Admin → DNS → enable MagicDNS. In Machines, rename both devices and use the peer's full .ts.net name." };
+    private readonly Label _status = new() { AutoSize = true, Text = "Use the same shared token and port on both computers." };
 
     public PeerSettings Settings => new(_enabled.Checked, _host.Text.Trim(), (int)_port.Value, _token.Text.Trim());
 
@@ -23,7 +24,7 @@ internal sealed class PeerSettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ShowInTaskbar = false;
-        ClientSize = new Size(470, 300);
+        ClientSize = new Size(470, 330);
 
         _enabled.Checked = settings.Enabled;
         _host.Text = settings.Host;
@@ -35,19 +36,21 @@ internal sealed class PeerSettingsForm : Form
             Dock = DockStyle.Fill,
             Padding = new Padding(16),
             ColumnCount = 2,
-            RowCount = 7,
+            RowCount = 8,
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 105));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.Controls.Add(_enabled, 0, 0);
         layout.SetColumnSpan(_enabled, 2);
-        layout.Controls.Add(new Label { Text = "Peer MagicDNS", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        layout.Controls.Add(_host, 1, 1);
-        layout.Controls.Add(new Label { Text = "HTTP port", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
-        layout.Controls.Add(_port, 1, 2);
-        layout.Controls.Add(new Label { Text = "Shared token", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
-        layout.Controls.Add(_token, 1, 3);
-        layout.Controls.Add(_status, 0, 4);
+        layout.Controls.Add(_help, 0, 1);
+        layout.SetColumnSpan(_help, 2);
+        layout.Controls.Add(new Label { Text = "Peer MagicDNS", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
+        layout.Controls.Add(_host, 1, 2);
+        layout.Controls.Add(new Label { Text = "HTTP port", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
+        layout.Controls.Add(_port, 1, 3);
+        layout.Controls.Add(new Label { Text = "Shared token", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 4);
+        layout.Controls.Add(_token, 1, 4);
+        layout.Controls.Add(_status, 0, 5);
         layout.SetColumnSpan(_status, 2);
 
         var tokenButtons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
@@ -61,7 +64,7 @@ internal sealed class PeerSettingsForm : Form
         };
         tokenButtons.Controls.Add(generate);
         tokenButtons.Controls.Add(copy);
-        layout.Controls.Add(tokenButtons, 0, 5);
+        layout.Controls.Add(tokenButtons, 0, 6);
         layout.SetColumnSpan(tokenButtons, 2);
 
         var actions = new FlowLayoutPanel
@@ -77,7 +80,7 @@ internal sealed class PeerSettingsForm : Form
         actions.Controls.Add(save);
         actions.Controls.Add(cancel);
         actions.Controls.Add(test);
-        layout.Controls.Add(actions, 0, 6);
+        layout.Controls.Add(actions, 0, 7);
         layout.SetColumnSpan(actions, 2);
 
         Controls.Add(layout);
