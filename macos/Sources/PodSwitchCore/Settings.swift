@@ -1,14 +1,17 @@
 import Foundation
 
-/// `UserDefaults`-backed implementation of `SettingsStore`.
+/// UserDefaults-backed implementation of local and peer settings.
 @MainActor
-public final class Settings: SettingsStore {
-
+public final class Settings: SettingsStore, PeerSettingsProviding {
     private enum Key {
         static let enabled = "podswitch.enabled"
         static let mode = "podswitch.mode"
         static let address = "podswitch.target.address"
         static let name = "podswitch.target.name"
+        static let peerEnabled = "podswitch.peer.enabled"
+        static let peerHost = "podswitch.peer.host"
+        static let peerPort = "podswitch.peer.port"
+        static let peerToken = "podswitch.peer.token"
     }
 
     private let defaults: UserDefaults
@@ -20,7 +23,6 @@ public final class Settings: SettingsStore {
         }
     }
 
-    /// Display name of the configured target device, if any.
     public var targetDeviceName: String? {
         get { defaults.string(forKey: Key.name) }
         set { defaults.set(newValue, forKey: Key.name) }
@@ -30,13 +32,7 @@ public final class Settings: SettingsStore {
         get {
             let enabled = defaults.object(forKey: Key.enabled) as? Bool ?? true
             let mode = (defaults.string(forKey: Key.mode)).flatMap(Mode.init(rawValue:)) ?? .ask
-            let address = defaults.string(forKey: Key.address)
-            return Config(
-                enabled: enabled,
-                mode: mode,
-                enabledCategories: [.media],
-                targetDeviceId: address
-            )
+            return Config(enabled: enabled, mode: mode, enabledCategories: [.media], targetDeviceId: defaults.string(forKey: Key.address))
         }
         set {
             defaults.set(newValue.enabled, forKey: Key.enabled)
@@ -50,7 +46,24 @@ public final class Settings: SettingsStore {
         }
     }
 
-    /// Persist a chosen target device (address + display name) together.
+    public var peerSettings: PeerSettings {
+        get {
+            let rawPort = defaults.integer(forKey: Key.peerPort)
+            return PeerSettings(
+                enabled: defaults.bool(forKey: Key.peerEnabled),
+                host: defaults.string(forKey: Key.peerHost) ?? "",
+                port: UInt16(rawPort > 0 && rawPort <= 65535 ? rawPort : 8765),
+                token: defaults.string(forKey: Key.peerToken) ?? ""
+            )
+        }
+        set {
+            defaults.set(newValue.enabled, forKey: Key.peerEnabled)
+            defaults.set(newValue.host, forKey: Key.peerHost)
+            defaults.set(Int(newValue.port), forKey: Key.peerPort)
+            defaults.set(newValue.token, forKey: Key.peerToken)
+        }
+    }
+
     public func setTargetDevice(address: String, name: String) {
         defaults.set(address, forKey: Key.address)
         defaults.set(name, forKey: Key.name)
