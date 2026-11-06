@@ -1,12 +1,10 @@
 import Foundation
 
-/// Receives `SwitchEvent`s emitted by an `AudioMonitoring` implementation.
 @MainActor
 public protocol AudioMonitorDelegate: AnyObject {
     func audioMonitor(_ monitor: any AudioMonitoring, didEmit event: SwitchEvent)
 }
 
-/// Observes audio playback and emits debounced `SwitchEvent`s on the main actor.
 @MainActor
 public protocol AudioMonitoring: AnyObject {
     var delegate: AudioMonitorDelegate? { get set }
@@ -14,24 +12,38 @@ public protocol AudioMonitoring: AnyObject {
     func stop()
 }
 
-/// Bluetooth connection to the target device.
 public protocol BluetoothConnecting: Sendable {
-    /// The target device is the active system audio output right now.
     func isActiveOutput(deviceId: String) -> Bool
-    /// The target device is currently paired with this machine.
     func isPaired(deviceId: String) -> Bool
-    /// Open an audio connection to the target device (fire-and-forget).
     func connect(deviceId: String)
 }
 
-/// User-facing notifications.
+/// Async Bluetooth operations used by cross-device hand-off.
+public protocol BluetoothHandoff: BluetoothConnecting {
+    func disconnectAndWait(deviceId: String) async -> Bool
+    func connectAndWait(deviceId: String) async -> Bool
+}
+
+public protocol PeerSwitching: Sendable {
+    func releasePeer(host: String, port: UInt16, token: String) async -> Bool
+    func checkPeer(host: String, port: UInt16, token: String) async -> Bool
+}
+
+@MainActor
+public protocol PeerSettingsProviding: AnyObject {
+    var peerSettings: PeerSettings { get set }
+}
+
 @MainActor
 public protocol Notifying: AnyObject {
-    /// Show the "move audio to the target device?" prompt with a Connect action.
     func showSwitchPrompt()
 }
 
-/// Persisted user configuration.
+@MainActor
+public protocol SwitchFailureNotifying: AnyObject {
+    func showSwitchFailure(_ message: String)
+}
+
 @MainActor
 public protocol SettingsStore: AnyObject {
     var config: Config { get set }
