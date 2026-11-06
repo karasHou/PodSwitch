@@ -166,7 +166,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let response = alert.runModal()
         guard response == .alertFirstButtonReturn || response == .alertSecondButtonReturn else { return }
-        let parsedPort = UInt16(port.stringValue) ?? 8765
+        let rawPort = UInt16(port.stringValue) ?? 8765
+        let parsedPort = rawPort == 0 ? 8765 : rawPort
         settings.peerSettings = PeerSettings(
             enabled: enabled.state == .on,
             host: host.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),

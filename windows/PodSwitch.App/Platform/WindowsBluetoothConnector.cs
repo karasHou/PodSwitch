@@ -7,6 +7,7 @@ namespace PodSwitch.App.Platform;
 /// <summary>Windows Bluetooth connector with verified connect and release operations.</summary>
 internal sealed class WindowsBluetoothConnector : IBluetoothHandoff
 {
+    private readonly SemaphoreSlim _operationGate = new(1, 1);
     private const int MaxAttempts = 2;
     private const int VerifyTimeoutMs = 8000;
     private const int PollIntervalMs = 400;
@@ -30,16 +31,26 @@ internal sealed class WindowsBluetoothConnector : IBluetoothHandoff
     public void Connect(string targetDeviceId)
         => _ = ConnectAndWaitAsync(targetDeviceId);
 
-    public Task<bool> DisconnectAndWaitAsync(string targetDeviceId, CancellationToken cancellationToken = default)
+    public async Task<bool> DisconnectAndWaitAsync(string targetDeviceId, CancellationToken cancellationToken = default)
     {
-        var normalized = Normalize(targetDeviceId);
-        return Task.Run(() => DisconnectWithVerify(normalized, cancellationToken), cancellationToken);
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var normalized = Normalize(targetDeviceId);
+            return await Task.Run(() => DisconnectWithVerify(normalized, cancellationToken), cancellationToken).ConfigureAwait(false);
+        }
+        finally { _operationGate.Release(); }
     }
 
-    public Task<bool> ConnectAndWaitAsync(string targetDeviceId, CancellationToken cancellationToken = default)
+    public async Task<bool> ConnectAndWaitAsync(string targetDeviceId, CancellationToken cancellationToken = default)
     {
-        var normalized = Normalize(targetDeviceId);
-        return Task.Run(() => ConnectWithVerify(normalized, cancellationToken), cancellationToken);
+        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var normalized = Normalize(targetDeviceId);
+            return await Task.Run(() => ConnectWithVerify(normalized, cancellationToken), cancellationToken).ConfigureAwait(false);
+        }
+        finally { _operationGate.Release(); }
     }
 
     public IReadOnlyList<(string Address, string Name)> ListPairedDevices()
