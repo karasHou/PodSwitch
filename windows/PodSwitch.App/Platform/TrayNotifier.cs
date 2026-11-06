@@ -4,7 +4,7 @@ namespace PodSwitch.App.Platform;
 
 /// <summary>ASK-mode prompt using a tray balloon; clicking it raises <see cref="AcceptRequested"/>.</summary>
 // All NotifyIcon calls must happen on the UI thread (the tray owns it).
-internal sealed class TrayNotifier : INotifier
+internal sealed class TrayNotifier : INotifier, ISwitchFailureNotifier
 {
     private readonly NotifyIcon _tray;
     private bool _pending;
@@ -38,5 +38,12 @@ internal sealed class TrayNotifier : INotifier
         _pending = false;
         _tray.Visible = false;
         _tray.Visible = true;
+    }
+
+    public void ShowFailure(string message)
+    {
+        _tray.BalloonTipTitle = "PodSwitch";
+        _tray.BalloonTipText = message;
+        _tray.ShowBalloonTip(5000);
     }
 }
