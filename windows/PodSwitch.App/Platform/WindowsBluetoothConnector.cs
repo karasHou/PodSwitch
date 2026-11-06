@@ -4,31 +4,23 @@ using PodSwitch.Core;
 
 namespace PodSwitch.App.Platform;
 
-/// <summary>
-/// Connects the target Bluetooth audio device by toggling its audio services and setting it as the
-/// default render endpoint. Fire-and-forget: <see cref="Connect"/> returns immediately.
-/// </summary>
-internal sealed class WindowsBluetoothConnector : IBluetoothConnector
+/// <summary>Windows Bluetooth connector with verified connect and release operations.</summary>
+internal sealed class WindowsBluetoothConnector : IBluetoothHandoff
 {
     private const int MaxAttempts = 2;
     private const int VerifyTimeoutMs = 8000;
     private const int PollIntervalMs = 400;
-
-    private const uint BLUETOOTH_SERVICE_DISABLE = 0x00;
-    private const uint BLUETOOTH_SERVICE_ENABLE = 0x01;
+    private const uint ServiceDisable = 0x00;
+    private const uint ServiceEnable = 0x01;
     private const int ToggleGapMs = 1000;
     private const int EnableRetries = 3;
     private const int EnableRetryDelayMs = 1000;
 
     private static readonly Guid A2dpSink = new("0000110B-0000-1000-8000-00805F9B34FB");
     private static readonly Guid HandsFree = new("0000111E-0000-1000-8000-00805F9B34FB");
-
     private readonly MMDeviceEnumerator _audio = new();
 
-    // ---- IBluetoothConnector ----
-
-    public bool IsPaired(string targetDeviceId)
-        => FindPairedName(Normalize(targetDeviceId)) is not null;
+    public bool IsPaired(string targetDeviceId) => FindPairedDevice(Normalize(targetDeviceId)) is not null;
 
     public bool IsActiveOutput(string targetDeviceId)
     {
@@ -37,12 +29,20 @@ internal sealed class WindowsBluetoothConnector : IBluetoothConnector
     }
 
     public void Connect(string targetDeviceId)
+        => _ = ConnectAndWaitAsync(targetDeviceId);
+
+    public Task<bool> DisconnectAndWaitAsync(string targetDeviceId, CancellationToken cancellationToken = default)
     {
         var normalized = Normalize(targetDeviceId);
-        Task.Run(() => ConnectWithVerify(normalized));
+        return Task.Run(() => DisconnectWithVerify(normalized, cancellationToken), cancellationToken);
     }
 
-    /// <summary>The paired audio devices, for the tray "Target device" picker.</summary>
+    public Task<bool> ConnectAndWaitAsync(string targetDeviceId, CancellationToken cancellationToken = default)
+    {
+        var normalized = Normalize(targetDeviceId);
+        return Task.Run(() => ConnectWithVerify(normalized, cancellationToken), cancellationToken);
+    }
+
     public IReadOnlyList<(string Address, string Name)> ListPairedDevices()
     {
         var list = new List<(string, string)>();
@@ -54,78 +54,99 @@ internal sealed class WindowsBluetoothConnector : IBluetoothConnector
         return list;
     }
 
-    // ---- Connect / verify / retry ----
-
-    private void ConnectWithVerify(string normalizedAddress)
+    private bool DisconnectWithVerify(string normalizedAddress, CancellationToken cancellationToken)
     {
-        for (int attempt = 1; attempt <= MaxAttempts; attempt++)
+        var info = FindPairedDevice(normalizedAddress);
+        if (info is null) return false;
+        if (info.Value.fConnected == 0 && !IsActiveOutput(normalizedAddress)) return true;
+
+        var device = info.Value;
+        _ = SetService(ref device, HandsFree, ServiceDisable);
+        _ = SetService(ref device, A2dpSink, ServiceDisable);
+
+        var waited = 0;
+        while (waited < VerifyTimeoutMs)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            Thread.Sleep(PollIntervalMs);
+            waited += PollIntervalMs;
+            var current = FindPairedDevice(normalizedAddress);
+            if (current is not null && current.Value.fConnected == 0 && !IsActiveOutput(normalizedAddress))
+                return true;
+        }
+        return false;
+    }
+
+    private bool ConnectWithVerify(string normalizedAddress, CancellationToken cancellationToken)
+    {
+        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
             var name = FindPairedName(normalizedAddress);
-            if (name is null) return;
-            if (IsDefaultRenderEndpoint(name)) return;
+            if (name is null) return false;
+            if (IsBluetoothConnected(normalizedAddress) && IsDefaultRenderEndpoint(name)) return true;
 
-            ToggleAudioServices(normalizedAddress);
+            if (!ToggleAudioServices(normalizedAddress)) continue;
 
-            int waited = 0;
+            var waited = 0;
             while (waited < VerifyTimeoutMs)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 Thread.Sleep(PollIntervalMs);
                 waited += PollIntervalMs;
                 TrySetDefaultEndpoint(name);
-                if (IsDefaultRenderEndpoint(name)) return;
+                if (IsBluetoothConnected(normalizedAddress) && IsDefaultRenderEndpoint(name)) return true;
             }
         }
+        return false;
     }
 
-    /// <summary>Toggles (disable then enable) the device audio services, A2DP sink last.</summary>
-    private void ToggleAudioServices(string normalizedAddress)
+    private bool ToggleAudioServices(string normalizedAddress)
     {
-        BLUETOOTH_DEVICE_INFO? target = null;
-        EnumeratePaired(info =>
-        {
-            if (Normalize(FormatAddress(info.Address)) == normalizedAddress) { target = info; return false; }
-            return true;
-        });
-        if (target is null) return;
-
-        var info2 = target.Value;
-        ToggleService(ref info2, HandsFree);
-        ToggleService(ref info2, A2dpSink);
+        var device = FindPairedDevice(normalizedAddress);
+        if (device is null) return false;
+        var info = device.Value;
+        var hfp = ToggleService(ref info, HandsFree);
+        var a2dp = ToggleService(ref info, A2dpSink);
+        return hfp || a2dp;
     }
 
-    private static void ToggleService(ref BLUETOOTH_DEVICE_INFO info, Guid service)
+    private static bool ToggleService(ref BLUETOOTH_DEVICE_INFO info, Guid service)
     {
-        var g = service;
-        try { BluetoothSetServiceState(IntPtr.Zero, ref info, ref g, BLUETOOTH_SERVICE_DISABLE); }
-        catch { }
+        _ = SetService(ref info, service, ServiceDisable);
         Thread.Sleep(ToggleGapMs);
-
-        for (int i = 0; i < EnableRetries; i++)
+        for (var i = 0; i < EnableRetries; i++)
         {
-            uint r;
-            try { r = BluetoothSetServiceState(IntPtr.Zero, ref info, ref g, BLUETOOTH_SERVICE_ENABLE); }
-            catch { return; }
-            if (r == 0) return;
+            if (SetService(ref info, service, ServiceEnable)) return true;
             Thread.Sleep(EnableRetryDelayMs);
         }
+        return false;
     }
 
-    // ---- Paired-device enumeration ----
-
-    private string? FindPairedName(string normalizedAddress)
+    private static bool SetService(ref BLUETOOTH_DEVICE_INFO info, Guid service, uint state)
     {
-        string? found = null;
+        var guid = service;
+        try { return BluetoothSetServiceState(IntPtr.Zero, ref info, ref guid, state) == 0; }
+        catch { return false; }
+    }
+
+    private bool IsBluetoothConnected(string normalizedAddress)
+        => FindPairedDevice(normalizedAddress)?.fConnected == 1;
+
+    private BLUETOOTH_DEVICE_INFO? FindPairedDevice(string normalizedAddress)
+    {
+        BLUETOOTH_DEVICE_INFO? found = null;
         EnumeratePaired(info =>
         {
-            if (Normalize(FormatAddress(info.Address)) == normalizedAddress)
-            {
-                found = info.szName;
-                return false;
-            }
-            return true;
+            if (Normalize(FormatAddress(info.Address)) != normalizedAddress) return true;
+            found = info;
+            return false;
         });
         return found;
     }
+
+    private string? FindPairedName(string normalizedAddress)
+        => FindPairedDevice(normalizedAddress)?.szName;
 
     private static void EnumeratePaired(Func<BLUETOOTH_DEVICE_INFO, bool> onDevice)
     {
@@ -141,90 +162,68 @@ internal sealed class WindowsBluetoothConnector : IBluetoothConnector
             hRadio = IntPtr.Zero,
         };
         var info = new BLUETOOTH_DEVICE_INFO { dwSize = (uint)Marshal.SizeOf<BLUETOOTH_DEVICE_INFO>() };
-
-        IntPtr hFind = BluetoothFindFirstDevice(ref search, ref info);
-        if (hFind == IntPtr.Zero) return;
+        var handle = BluetoothFindFirstDevice(ref search, ref info);
+        if (handle == IntPtr.Zero) return;
         try
         {
             do
             {
                 if (!onDevice(info)) return;
                 info = new BLUETOOTH_DEVICE_INFO { dwSize = (uint)Marshal.SizeOf<BLUETOOTH_DEVICE_INFO>() };
-            }
-            while (BluetoothFindNextDevice(hFind, ref info));
+            } while (BluetoothFindNextDevice(handle, ref info));
         }
-        finally
-        {
-            BluetoothFindDeviceClose(hFind);
-        }
+        finally { BluetoothFindDeviceClose(handle); }
     }
-
-    // ---- Audio endpoint helpers (NAudio + IPolicyConfig) ----
 
     private bool IsDefaultRenderEndpoint(string deviceName)
     {
         try
         {
             if (!_audio.HasDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)) return false;
-            using var def = _audio.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-            return EndpointMatches(def.FriendlyName, deviceName);
+            using var endpoint = _audio.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            return EndpointMatches(endpoint.FriendlyName, deviceName);
         }
-        catch
-        {
-            return false;
-        }
+        catch { return false; }
     }
 
     private void TrySetDefaultEndpoint(string deviceName)
     {
         try
         {
-            foreach (var dev in _audio.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+            foreach (var endpoint in _audio.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
             {
-                using (dev)
+                using (endpoint)
                 {
-                    if (!EndpointMatches(dev.FriendlyName, deviceName)) continue;
-                    if (IsDefaultRenderEndpoint(deviceName)) return;
+                    if (!EndpointMatches(endpoint.FriendlyName, deviceName) || IsDefaultRenderEndpoint(deviceName)) continue;
                     var policy = (IPolicyConfig)new CPolicyConfigClient();
                     try
                     {
-                        policy.SetDefaultEndpoint(dev.ID, 0);
-                        policy.SetDefaultEndpoint(dev.ID, 1);
-                        policy.SetDefaultEndpoint(dev.ID, 2);
+                        policy.SetDefaultEndpoint(endpoint.ID, 0);
+                        policy.SetDefaultEndpoint(endpoint.ID, 1);
+                        policy.SetDefaultEndpoint(endpoint.ID, 2);
                     }
-                    finally
-                    {
-                        Marshal.ReleaseComObject(policy);
-                    }
+                    finally { Marshal.ReleaseComObject(policy); }
                     return;
                 }
             }
         }
-        catch
-        {
-        }
+        catch { }
     }
 
-    private static bool EndpointMatches(string endpointFriendlyName, string deviceName)
-    {
-        if (string.IsNullOrEmpty(endpointFriendlyName) || string.IsNullOrEmpty(deviceName)) return false;
-        return endpointFriendlyName.Contains(deviceName, StringComparison.OrdinalIgnoreCase)
-            || deviceName.Contains(endpointFriendlyName, StringComparison.OrdinalIgnoreCase);
-    }
-
-    // ---- Address helpers ----
+    private static bool EndpointMatches(string endpointName, string deviceName)
+        => !string.IsNullOrEmpty(endpointName) && !string.IsNullOrEmpty(deviceName)
+            && (endpointName.Contains(deviceName, StringComparison.OrdinalIgnoreCase)
+                || deviceName.Contains(endpointName, StringComparison.OrdinalIgnoreCase));
 
     private static string FormatAddress(ulong address)
     {
-        var b = new byte[6];
-        for (int i = 0; i < 6; i++) b[i] = (byte)((address >> (8 * i)) & 0xFF);
-        return $"{b[5]:X2}:{b[4]:X2}:{b[3]:X2}:{b[2]:X2}:{b[1]:X2}:{b[0]:X2}";
+        var bytes = new byte[6];
+        for (var i = 0; i < 6; i++) bytes[i] = (byte)((address >> (8 * i)) & 0xFF);
+        return $"{bytes[5]:X2}:{bytes[4]:X2}:{bytes[3]:X2}:{bytes[2]:X2}:{bytes[1]:X2}:{bytes[0]:X2}";
     }
 
     private static string Normalize(string address)
         => address.Replace(":", "").Replace("-", "").Replace(" ", "").ToLowerInvariant();
-
-    // ---- P/Invoke: Win32 Bluetooth API (bthprops.cpl) ----
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SYSTEMTIME
@@ -261,37 +260,31 @@ internal sealed class WindowsBluetoothConnector : IBluetoothConnector
     }
 
     [DllImport("bthprops.cpl", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr BluetoothFindFirstDevice(ref BLUETOOTH_DEVICE_SEARCH_PARAMS pbtsp, ref BLUETOOTH_DEVICE_INFO pbtdi);
-
+    private static extern IntPtr BluetoothFindFirstDevice(ref BLUETOOTH_DEVICE_SEARCH_PARAMS search, ref BLUETOOTH_DEVICE_INFO info);
     [DllImport("bthprops.cpl", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool BluetoothFindNextDevice(IntPtr hFind, ref BLUETOOTH_DEVICE_INFO pbtdi);
-
+    private static extern bool BluetoothFindNextDevice(IntPtr handle, ref BLUETOOTH_DEVICE_INFO info);
     [DllImport("bthprops.cpl", SetLastError = true)]
-    private static extern bool BluetoothFindDeviceClose(IntPtr hFind);
-
+    private static extern bool BluetoothFindDeviceClose(IntPtr handle);
     [DllImport("bthprops.cpl", SetLastError = true)]
-    private static extern uint BluetoothSetServiceState(IntPtr hRadio, ref BLUETOOTH_DEVICE_INFO pbtdi, ref Guid pGuidService, uint dwServiceFlags);
-
-    // ---- IPolicyConfig (undocumented default-endpoint switching) ----
+    private static extern uint BluetoothSetServiceState(IntPtr radio, ref BLUETOOTH_DEVICE_INFO info, ref Guid service, uint flags);
 
     [ComImport, Guid("870af99c-171d-4f9e-af0d-e63df40c2bc9")]
     private class CPolicyConfigClient { }
 
-    [ComImport, Guid("f8679f50-850a-41cf-9c72-430f290290c8"),
-     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    [ComImport, Guid("f8679f50-850a-41cf-9c72-430f290290c8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IPolicyConfig
     {
-        [PreserveSig] int GetMixFormat(string pszDeviceName, IntPtr ppFormat);
-        [PreserveSig] int GetDeviceFormat(string pszDeviceName, int bDefault, IntPtr ppFormat);
-        [PreserveSig] int ResetDeviceFormat(string pszDeviceName);
-        [PreserveSig] int SetDeviceFormat(string pszDeviceName, IntPtr pEndpointFormat, IntPtr mixFormat);
-        [PreserveSig] int GetProcessingPeriod(string pszDeviceName, int bDefault, IntPtr pmftDefaultPeriod, IntPtr pmftMinimumPeriod);
-        [PreserveSig] int SetProcessingPeriod(string pszDeviceName, IntPtr pmftPeriod);
-        [PreserveSig] int GetShareMode(string pszDeviceName, IntPtr pMode);
-        [PreserveSig] int SetShareMode(string pszDeviceName, IntPtr mode);
-        [PreserveSig] int GetPropertyValue(string pszDeviceName, int bFxStore, IntPtr key, IntPtr pv);
-        [PreserveSig] int SetPropertyValue(string pszDeviceName, int bFxStore, IntPtr key, IntPtr pv);
-        [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string pszDeviceName, int eRole);
-        [PreserveSig] int SetEndpointVisibility(string pszDeviceName, int bVisible);
+        [PreserveSig] int GetMixFormat(string deviceName, IntPtr format);
+        [PreserveSig] int GetDeviceFormat(string deviceName, int isDefault, IntPtr format);
+        [PreserveSig] int ResetDeviceFormat(string deviceName);
+        [PreserveSig] int SetDeviceFormat(string deviceName, IntPtr endpointFormat, IntPtr mixFormat);
+        [PreserveSig] int GetProcessingPeriod(string deviceName, int isDefault, IntPtr period, IntPtr minimum);
+        [PreserveSig] int SetProcessingPeriod(string deviceName, IntPtr period);
+        [PreserveSig] int GetShareMode(string deviceName, IntPtr mode);
+        [PreserveSig] int SetShareMode(string deviceName, IntPtr mode);
+        [PreserveSig] int GetPropertyValue(string deviceName, int fxStore, IntPtr key, IntPtr value);
+        [PreserveSig] int SetPropertyValue(string deviceName, int fxStore, IntPtr key, IntPtr value);
+        [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string deviceName, int role);
+        [PreserveSig] int SetEndpointVisibility(string deviceName, int visible);
     }
 }
