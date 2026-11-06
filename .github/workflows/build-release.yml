@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: podswitch-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   macos:
     runs-on: macos-15
