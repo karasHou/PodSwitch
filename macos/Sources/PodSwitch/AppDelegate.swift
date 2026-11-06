@@ -2,38 +2,38 @@ import AppKit
 import IOBluetooth
 import PodSwitchCore
 
-/// Menu-bar controller: builds the status menu and drives the `Coordinator`.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-
     private var statusItem: NSStatusItem!
     private let settings = Settings()
     private let bluetooth = BluetoothConnector()
     private let notifier = NotificationManager()
     private let monitor = AudioMonitor()
     private var coordinator: Coordinator!
+    private var peerServer: PeerSwitchServer!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        coordinator = Coordinator(
-            monitor: monitor,
-            bluetooth: bluetooth,
-            notifier: notifier,
-            settings: settings
-        )
-        notifier.onAccept = { [weak self] in
-            self?.coordinator.handle(.userAcceptedSwitch)
+        coordinator = Coordinator(monitor: monitor, bluetooth: bluetooth, notifier: notifier, settings: settings)
+        peerServer = PeerSwitchServer(tokenProvider: { [weak settings] in
+            settings?.peerSettings.token ?? ""
+        }) { [weak self] in
+            guard let self, let target = self.settings.config.targetDeviceId else { return false }
+            return await self.bluetooth.disconnectAndWait(deviceId: target)
         }
+        refreshPeerServer()
+        notifier.onAccept = { [weak self] in self?.coordinator.handle(.userAcceptedSwitch) }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = statusItem.button {
-            button.image = Self.menuBarImage()
-        }
-
+        statusItem.button?.image = Self.menuBarImage()
         coordinator.start()
         rebuildMenu()
     }
 
-    /// The menu-bar template image: bundled brand glyph, with an SF Symbol fallback.
+    func applicationWillTerminate(_ notification: Notification) {
+        coordinator?.stop()
+        peerServer?.stop()
+    }
+
     private static func menuBarImage() -> NSImage? {
         if let url = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "pdf"),
            let image = NSImage(contentsOf: url) {
@@ -41,103 +41,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             image.size = NSSize(width: 18, height: 18)
             return image
         }
-        let fallback = NSImage(systemSymbolName: "headphones", accessibilityDescription: "PodSwitch")
-        fallback?.isTemplate = true
-        return fallback
+        let image = NSImage(systemSymbolName: "headphones", accessibilityDescription: "PodSwitch")
+        image?.isTemplate = true
+        return image
     }
-
-    // MARK: - Menu construction
 
     private func rebuildMenu() {
         let config = settings.config
         let menu = NSMenu()
-
-        let enabledItem = NSMenuItem(
-            title: "Enabled",
-            action: #selector(toggleEnabled),
-            keyEquivalent: ""
-        )
-        enabledItem.target = self
-        enabledItem.state = config.enabled ? .on : .off
-        menu.addItem(enabledItem)
-
+        let enabled = NSMenuItem(title: "Enabled", action: #selector(toggleEnabled), keyEquivalent: "")
+        enabled.target = self
+        enabled.state = config.enabled ? .on : .off
+        menu.addItem(enabled)
         menu.addItem(.separator())
 
-        let modeHeader = NSMenuItem(title: "Mode", action: nil, keyEquivalent: "")
-        modeHeader.isEnabled = false
-        menu.addItem(modeHeader)
-
-        let stealItem = NSMenuItem(
-            title: "Steal (switch automatically)",
-            action: #selector(selectSteal),
-            keyEquivalent: ""
-        )
-        stealItem.target = self
-        stealItem.state = config.mode == .steal ? .on : .off
-        menu.addItem(stealItem)
-
-        let askItem = NSMenuItem(
-            title: "Ask (notify me first)",
-            action: #selector(selectAsk),
-            keyEquivalent: ""
-        )
-        askItem.target = self
-        askItem.state = config.mode == .ask ? .on : .off
-        menu.addItem(askItem)
-
-        menu.addItem(.separator())
-
-        let deviceHeader = NSMenuItem(title: "Device", action: nil, keyEquivalent: "")
-        deviceHeader.isEnabled = false
-        menu.addItem(deviceHeader)
-
-        let currentName = settings.targetDeviceName
-        let pairedSubmenu = NSMenu()
-        let pairedDevices = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []
-        if pairedDevices.isEmpty {
-            let empty = NSMenuItem(title: "No paired devices", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            pairedSubmenu.addItem(empty)
-        } else {
-            for device in pairedDevices {
-                let name = device.name ?? device.addressString ?? "Unknown"
-                let item = NSMenuItem(
-                    title: name,
-                    action: #selector(selectDevice(_:)),
-                    keyEquivalent: ""
-                )
-                item.target = self
-                item.representedObject = device
-                if let address = device.addressString,
-                   address.caseInsensitiveCompare(config.targetDeviceId ?? "") == .orderedSame {
-                    item.state = .on
-                }
-                pairedSubmenu.addItem(item)
-            }
+        for (title, mode, selector) in [
+            ("Steal (switch automatically)", Mode.steal, #selector(selectSteal)),
+            ("Ask (notify me first)", Mode.ask, #selector(selectAsk))
+        ] {
+            let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+            item.target = self
+            item.state = config.mode == mode ? .on : .off
+            menu.addItem(item)
         }
 
+        menu.addItem(.separator())
+        let submenu = NSMenu()
+        let devices = (IOBluetoothDevice.pairedDevices() as? [IOBluetoothDevice]) ?? []
+        if devices.isEmpty {
+            let empty = NSMenuItem(title: "No paired devices", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            submenu.addItem(empty)
+        } else {
+            for device in devices {
+                let name = device.name ?? device.addressString ?? "Unknown"
+                let item = NSMenuItem(title: name, action: #selector(selectDevice(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = device
+                item.state = device.addressString == config.targetDeviceId ? .on : .off
+                submenu.addItem(item)
+            }
+        }
         let deviceItem = NSMenuItem(
-            title: currentName.map { "Target: \($0)" } ?? "Choose device…",
+            title: settings.targetDeviceName.map { "Target: \($0)" } ?? "Choose device…",
             action: nil,
             keyEquivalent: ""
         )
-        deviceItem.submenu = pairedSubmenu
+        deviceItem.submenu = submenu
         menu.addItem(deviceItem)
-
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(
-            title: "Quit PodSwitch",
-            action: #selector(quit),
-            keyEquivalent: "q"
-        )
-        quitItem.target = self
-        menu.addItem(quitItem)
+        let peerItem = NSMenuItem(title: "Cross-device settings…", action: #selector(showPeerSettings), keyEquivalent: "")
+        peerItem.target = self
+        menu.addItem(peerItem)
 
+        let quit = NSMenuItem(title: "Quit PodSwitch", action: #selector(quit), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
         statusItem.menu = menu
     }
-
-    // MARK: - Actions
 
     @objc private func toggleEnabled() {
         var config = settings.config
@@ -163,13 +125,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func selectDevice(_ sender: NSMenuItem) {
         guard let device = sender.representedObject as? IOBluetoothDevice,
               let address = device.addressString else { return }
-        let name = device.name ?? address
-        settings.setTargetDevice(address: address, name: name)
+        settings.setTargetDevice(address: address, name: device.name ?? address)
         rebuildMenu()
+    }
+
+    @objc private func showPeerSettings() {
+        let current = settings.peerSettings
+        let alert = NSAlert()
+        alert.messageText = "Cross-device switching"
+        alert.informativeText = "Enable Tailscale on both computers. Enter the other computer's MagicDNS name and use the same token on both devices. Port 8765 is the default."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Test connection")
+        alert.addButton(withTitle: "Cancel")
+
+        let enabled = NSButton(checkboxWithTitle: "Enable Tailscale switching", target: nil, action: nil)
+        enabled.state = current.enabled ? .on : .off
+        let hostLabel = NSTextField(labelWithString: "Peer MagicDNS")
+        let host = NSTextField(string: current.host)
+        host.placeholderString = "windows-pc.example.ts.net"
+        let portLabel = NSTextField(labelWithString: "HTTP port")
+        let port = NSTextField(string: String(current.port))
+        let tokenLabel = NSTextField(labelWithString: "Shared token")
+        let token = NSSecureTextField(string: current.token)
+        token.placeholderString = "Paste the same token on both devices"
+
+        let stack = NSStackView(views: [enabled, hostLabel, host, portLabel, port, tokenLabel, token])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 7
+        stack.setFrameSize(NSSize(width: 340, height: 190))
+        alert.accessoryView = stack
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn || response == .alertSecondButtonReturn else { return }
+        let parsedPort = UInt16(port.stringValue) ?? 8765
+        settings.peerSettings = PeerSettings(
+            enabled: enabled.state == .on,
+            host: host.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+            port: parsedPort,
+            token: token.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        refreshPeerServer()
+
+        if response == .alertSecondButtonReturn {
+            let peer = settings.peerSettings
+            Task { @MainActor in
+                let ok = await PeerSwitchClient().checkPeer(host: peer.host, port: peer.port, token: peer.token)
+                let result = NSAlert()
+                result.messageText = ok ? "Connection successful" : "Connection failed"
+                result.informativeText = ok
+                    ? "The peer is reachable and the shared token is valid."
+                    : "Check the peer app, MagicDNS name, port, and shared token."
+                result.runModal()
+            }
+        }
+        rebuildMenu()
+    }
+
+    private func refreshPeerServer() {
+        let peer = settings.peerSettings
+        if peer.enabled && !peer.token.isEmpty {
+            peerServer.start(port: peer.port)
+        } else {
+            peerServer.stop()
+        }
     }
 
     @objc private func quit() {
         coordinator.stop()
+        peerServer.stop()
         NSApplication.shared.terminate(nil)
     }
 }
