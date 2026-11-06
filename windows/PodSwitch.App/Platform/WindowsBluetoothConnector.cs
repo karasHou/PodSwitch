@@ -18,7 +18,6 @@ internal sealed class WindowsBluetoothConnector : IBluetoothHandoff
 
     private static readonly Guid A2dpSink = new("0000110B-0000-1000-8000-00805F9B34FB");
     private static readonly Guid HandsFree = new("0000111E-0000-1000-8000-00805F9B34FB");
-    private readonly MMDeviceEnumerator _audio = new();
 
     public bool IsPaired(string targetDeviceId) => FindPairedDevice(Normalize(targetDeviceId)) is not null;
 
@@ -179,7 +178,8 @@ internal sealed class WindowsBluetoothConnector : IBluetoothHandoff
     {
         try
         {
-            foreach (var endpoint in _audio.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+            using var audio = new MMDeviceEnumerator();
+            foreach (var endpoint in audio.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
             {
                 using (endpoint)
                 {
@@ -195,8 +195,9 @@ internal sealed class WindowsBluetoothConnector : IBluetoothHandoff
     {
         try
         {
-            if (!_audio.HasDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)) return false;
-            using var endpoint = _audio.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            using var audio = new MMDeviceEnumerator();
+            if (!audio.HasDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia)) return false;
+            using var endpoint = audio.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
             return EndpointMatches(endpoint.FriendlyName, deviceName);
         }
         catch { return false; }
@@ -206,7 +207,8 @@ internal sealed class WindowsBluetoothConnector : IBluetoothHandoff
     {
         try
         {
-            foreach (var endpoint in _audio.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
+            using var audio = new MMDeviceEnumerator();
+            foreach (var endpoint in audio.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
             {
                 using (endpoint)
                 {

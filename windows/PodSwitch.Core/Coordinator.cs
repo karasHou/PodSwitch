@@ -71,7 +71,7 @@ public sealed class Coordinator
                 return;
             }
 
-            var released = _peer is not null && await _peer.ReleasePeerAsync(peerSettings.Host, peerSettings.Port, peerSettings.Token).ConfigureAwait(false);
+            var released = _peer is not null && await _peer.ReleasePeerAsync(peerSettings.Host, peerSettings.Port, peerSettings.Token);
             if (!released)
             {
                 ShowFailure("Peer did not confirm headphone release. Switching cancelled.");
@@ -84,7 +84,7 @@ public sealed class Coordinator
                 return;
             }
 
-            if (!await handoff.ConnectAndWaitAsync(target).ConfigureAwait(false))
+            if (!await handoff.ConnectAndWaitAsync(target))
                 ShowFailure("Could not connect to the headphones. Check Bluetooth.");
         }
         catch (Exception ex)
