@@ -5,7 +5,7 @@ import UserNotifications
 ///
 /// Requires running from a bundled `.app` with a valid bundle identifier.
 @MainActor
-public final class NotificationManager: NSObject, Notifying, @MainActor UNUserNotificationCenterDelegate {
+public final class NotificationManager: NSObject, Notifying, @preconcurrency UNUserNotificationCenterDelegate {
 
     /// Invoked when the user taps the "Connect" action on the switch prompt.
     public var onAccept: (() -> Void)?
