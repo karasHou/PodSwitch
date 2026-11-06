@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let monitor = AudioMonitor()
     private var coordinator: Coordinator!
     private var peerServer: PeerSwitchServer!
+    private var peerFields: [Int: NSTextField] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         coordinator = Coordinator(monitor: monitor, bluetooth: bluetooth, notifier: notifier, settings: settings)
@@ -137,55 +138,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    @objc private func pastePeerField(_ sender: NSButton) {
+        guard let field = peerFields[sender.tag],
+              let value = NSPasteboard.general.string(forType: .string) else { return }
+        field.stringValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @objc private func generatePeerToken() {
+        guard let field = peerFields[3] else { return }
+        let bytes = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+        field.stringValue = bytes.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    @objc private func copyPeerToken() {
+        guard let field = peerFields[3], !field.stringValue.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(field.stringValue, forType: .string)
+    }
+
     @objc private func showPeerSettings() {
         let current = settings.peerSettings
         let alert = NSAlert()
         alert.messageText = "Cross-device switching"
-        alert.informativeText = "Enable MagicDNS in Tailscale Admin → DNS, then enter the other computer's full .ts.net name. Use the same token on both computers. Keep port 8765 on both devices. Local peer service: \(peerServer.isRunning ? "listening" : "not listening")."
+        alert.informativeText = "Enable MagicDNS in Tailscale Admin → DNS. Enter the other computer's full .ts.net name. Both computers can generate a token; use exactly the same value on both. Port 8765 is the default."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Test connection")
         alert.addButton(withTitle: "Cancel")
 
         let enabled = NSButton(checkboxWithTitle: "Enable Tailscale switching", target: nil, action: nil)
         enabled.state = current.enabled ? .on : .off
+
         let hostLabel = NSTextField(labelWithString: "Peer MagicDNS")
         let host = NSTextField(string: current.host)
         host.placeholderString = "windows-pc.example.ts.net"
+        let hostPaste = NSButton(title: "Paste", target: self, action: #selector(pastePeerField(_:)))
+        hostPaste.tag = 1
+
         let portLabel = NSTextField(labelWithString: "HTTP port")
         let port = NSTextField(string: String(current.port))
+        let portPaste = NSButton(title: "Paste", target: self, action: #selector(pastePeerField(_:)))
+        portPaste.tag = 2
+
         let tokenLabel = NSTextField(labelWithString: "Shared token")
         let token = NSSecureTextField(string: current.token)
-        token.placeholderString = "Paste the same token on both devices"
+        token.placeholderString = "Same shared token on both computers"
+        let tokenPaste = NSButton(title: "Paste", target: self, action: #selector(pastePeerField(_:)))
+        tokenPaste.tag = 3
+        let generate = NSButton(title: "Generate", target: self, action: #selector(generatePeerToken))
+        let copy = NSButton(title: "Copy", target: self, action: #selector(copyPeerToken))
 
-        let stack = NSStackView(views: [enabled, hostLabel, host, portLabel, port, tokenLabel, token])
+        peerFields = [1: host, 2: port, 3: token]
+        let hostRow = NSStackView(views: [host, hostPaste])
+        let portRow = NSStackView(views: [port, portPaste])
+        let tokenRow = NSStackView(views: [token, tokenPaste, generate, copy])
+        for row in [hostRow, portRow, tokenRow] {
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 6
+        }
+        host.widthAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
+        token.widthAnchor.constraint(greaterThanOrEqualToConstant: 190).isActive = true
+
+        let stack = NSStackView(views: [
+            enabled, hostLabel, hostRow, portLabel, portRow, tokenLabel, tokenRow
+        ])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 7
-        stack.setFrameSize(NSSize(width: 340, height: 190))
+        stack.spacing = 8
+        stack.setFrameSize(NSSize(width: 430, height: 230))
         alert.accessoryView = stack
 
         let response = alert.runModal()
-        guard response == .alertFirstButtonReturn || response == .alertSecondButtonReturn else { return }
         let rawPort = UInt16(port.stringValue) ?? 8765
         let parsedPort = rawPort == 0 ? 8765 : rawPort
-        settings.peerSettings = PeerSettings(
-            enabled: enabled.state == .on,
-            host: host.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
-            port: parsedPort,
-            token: token.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
-        refreshPeerServer()
+        if response == .alertFirstButtonReturn || response == .alertSecondButtonReturn {
+            settings.peerSettings = PeerSettings(
+                enabled: enabled.state == .on,
+                host: host.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+                port: parsedPort,
+                token: token.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            refreshPeerServer()
+        }
+        peerFields.removeAll()
 
         if response == .alertSecondButtonReturn {
             let peer = settings.peerSettings
             Task { @MainActor in
-                let ok = await PeerSwitchClient().checkPeer(host: peer.host, port: peer.port, token: peer.token)
-                let result = NSAlert()
-                result.messageText = ok ? "Connection successful" : "Connection failed"
-                result.informativeText = ok
-                    ? "The peer is reachable and the shared token is valid."
-                    : "Check the peer app, MagicDNS name, port, and shared token."
-                result.runModal()
+                let result = await PeerSwitchClient().diagnose(host: peer.host, port: peer.port, token: peer.token)
+                let alert = NSAlert()
+                alert.messageText = result.isSuccess ? "Connection successful" : "Connection test failed"
+                alert.informativeText = result.message
+                alert.runModal()
             }
         }
         rebuildMenu()

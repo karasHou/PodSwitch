@@ -19,7 +19,7 @@ Use the real Tailnet suffix shown in your Tailscale admin console. The example n
 3. Enable cross-device switching.
 4. Set **Peer MagicDNS** to the Mac's full MagicDNS name, such as `macbook.example.ts.net`.
 5. Keep the HTTP port at `8765`.
-6. Click **Generate token**, then **Copy token**.
+6. Enter any shared secret, or click **Generate token** and **Copy token**. The token can be generated on either computer.
 7. Save the settings.
 
 ## 3. Configure PodSwitch on macOS
@@ -29,10 +29,10 @@ Use the real Tailnet suffix shown in your Tailscale admin console. The example n
 3. Enable Tailscale switching.
 4. Set **Peer MagicDNS** to the Windows computer's full MagicDNS name, such as `windows-pc.example.ts.net`.
 5. Keep the HTTP port at `8765`.
-6. Paste the token generated on Windows.
+6. Paste or enter exactly the same token used on Windows. You can also generate it on Mac and copy it back to Windows.
 7. Save, then use **Test connection**.
 
-Both computers must use the same token and port. Each computer's Peer MagicDNS field points to the other computer.
+Both computers must use exactly the same token and port. A short token such as `123` works for a temporary test, but use a randomly generated 32-byte token for normal use. Each computer's Peer MagicDNS field points to the other computer.
 
 ## 4. Windows Firewall
 
@@ -60,7 +60,7 @@ On macOS, allow incoming connections for PodSwitch if the macOS application fire
 ## 5. Verify
 
 1. Confirm Tailscale shows both computers as connected.
-2. Open the PodSwitch peer settings on each computer and run **Test connection**.
+2. Open the PodSwitch peer settings on each computer and run **Test connection**. The result distinguishes a verified token (HTTP 200), a token mismatch (HTTP 401), DNS failure, and an unreachable peer.
 3. Start audio on Mac. Windows should release the XM3 before Mac connects.
 4. Start audio on Windows. Mac should release the XM3 before Windows connects.
 
