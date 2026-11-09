@@ -58,7 +58,7 @@ So PodSwitch fills a genuinely empty niche.
 - 🧭 **Lives where you expect it:** a **menu‑bar** item on macOS, a **Quick Settings
   tile** + config screen on Android, and a **system‑tray** app on Windows.
 - 🔋 **Battery‑friendly** — see *How it works*; it's event‑driven, not polling.
-- 🚫 **No account, no network, no telemetry.** Each device acts on its own.
+- 🔒 **No cloud account, relay, or telemetry.** Optional desktop hand-off uses direct Tailscale peer-to-peer networking.
 
 ## How it works (the interesting part)
 
