@@ -5,7 +5,7 @@ public enum PeerCheckResult: Equatable {
     case forbidden
     case unauthorizedLegacy
     case notFound
-    case serverError(Int)
+    case serverError(Int, String)
     case unreachable(String)
     case invalidResponse
 
@@ -19,8 +19,8 @@ public enum PeerCheckResult: Equatable {
             return "对端仍使用旧版 Token 认证，请更新两台电脑的 PodSwitch。"
         case .notFound:
             return "对端服务可达，但 API 路径不存在，请更新两台电脑的 PodSwitch。"
-        case .serverError(let status):
-            return "对端返回 HTTP \(status)，请检查对端服务状态。"
+        case .serverError(let status, let detail):
+            return "收到 HTTP \(status)。\(detail)"
         case .unreachable(let reason):
             return "无法连接对端：\(reason)"
         case .invalidResponse:
@@ -34,7 +34,18 @@ public enum PeerCheckResult: Equatable {
     }
 }
 
+/// Dedicated session for the private Tailscale peer API.
+/// An empty proxy dictionary prevents system HTTP/SOCKS/PAC proxies from intercepting Tailnet traffic.
 public struct PeerSwitchClient: PeerSwitching {
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.connectionProxyDictionary = [:]
+        configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 12
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: configuration)
+    }()
+
     public init() {}
 
     public func releasePeer(host: String, port: UInt16) async -> Bool {
@@ -60,8 +71,10 @@ public struct PeerSwitchClient: PeerSwitching {
 
         var request = URLRequest(url: url, timeoutInterval: 8)
         request.httpMethod = method
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await Self.session.data(for: request)
             guard let http = response as? HTTPURLResponse else { return .invalidResponse }
             switch http.statusCode {
             case 200:
@@ -75,10 +88,25 @@ public struct PeerSwitchClient: PeerSwitching {
             case 404:
                 return .notFound
             default:
-                return .serverError(http.statusCode)
+                return .serverError(http.statusCode, Self.responseDetails(http, data: data))
             }
         } catch {
             return .unreachable(error.localizedDescription)
         }
+    }
+
+    private static func responseDetails(_ response: HTTPURLResponse, data: Data) -> String {
+        var details: [String] = []
+        if let server = response.value(forHTTPHeaderField: "Server"), !server.isEmpty {
+            details.append("Server: \(server)")
+        }
+        if let via = response.value(forHTTPHeaderField: "Via"), !via.isEmpty {
+            details.append("Via: \(via)")
+        }
+        if let body = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty {
+            details.append("响应：\(String(body.prefix(220)))")
+        }
+        return details.isEmpty ? "请检查对端服务、代理和网络路径。" : details.joined(separator: "；")
     }
 }
