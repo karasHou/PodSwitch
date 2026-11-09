@@ -32,7 +32,7 @@ public final class NotificationManager: NSObject, Notifying, SwitchFailureNotify
     }
 
     public func showSwitchFailure(_ message: String) {
-        log.error("Switch notification suppressed: \(message, privacy: .public)")
+        Self.log.error("Switch notification suppressed: \(message, privacy: .public)")
     }
 
     public func userNotificationCenter(
