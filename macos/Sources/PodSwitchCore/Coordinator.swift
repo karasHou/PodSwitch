@@ -1,7 +1,6 @@
 import Foundation
 import os
 
-/// Routes audio events through a guarded local or cross-device hand-off.
 @MainActor
 public final class Coordinator: AudioMonitorDelegate {
     private let monitor: any AudioMonitoring
@@ -34,8 +33,16 @@ public final class Coordinator: AudioMonitorDelegate {
 
     public func handle(_ event: SwitchEvent) {
         let config = settings.config
-        let status = currentStatus(for: config)
-        execute(SwitchEngine.decide(event: event, config: config, status: status), config: config)
+        let peerSettings = (settings as? any PeerSettingsProviding)?.peerSettings ?? PeerSettings()
+        var decisionConfig = config
+
+        // Cross-device mode is always automatic on macOS; audio events stay silent.
+        if peerSettings.enabled, case .audioStarted = event {
+            decisionConfig.mode = .steal
+        }
+
+        let status = currentStatus(for: decisionConfig)
+        execute(SwitchEngine.decide(event: event, config: decisionConfig, status: status), config: config)
     }
 
     public func audioMonitor(_ monitor: any AudioMonitoring, didEmit event: SwitchEvent) {
@@ -80,34 +87,27 @@ public final class Coordinator: AudioMonitorDelegate {
             guard let self else { return }
             defer { self.switchInProgress = false }
 
-            if peerSettings.enabled {
-                guard !peerSettings.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      !peerSettings.token.isEmpty else {
-                    self.showFailure("请先配置对端 MagicDNS 和共享 Token")
-                    return
-                }
-                let released = await self.peer.releasePeer(
-                    host: peerSettings.host,
-                    port: peerSettings.port,
-                    token: peerSettings.token
-                )
-                guard released else {
-                    self.showFailure("对端未确认断开 XM3，本次切换已取消")
-                    return
-                }
+            guard !peerSettings.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                self.logFailure("Cross-device switch skipped: peer MagicDNS is empty")
+                return
+            }
+
+            let released = await self.peer.releasePeer(host: peerSettings.host, port: peerSettings.port)
+            guard released else {
+                self.logFailure("Cross-device switch skipped: peer release was not confirmed")
+                return
             }
 
             if let handoff = self.bluetooth as? any BluetoothHandoff {
                 let connected = await handoff.connectAndWait(deviceId: target)
-                if !connected { self.showFailure("XM3 连接失败，请检查蓝牙状态") }
+                if !connected { self.logFailure("Local XM3 connection failed after peer release") }
             } else {
                 self.bluetooth.connect(deviceId: target)
             }
         }
     }
 
-    private func showFailure(_ message: String) {
-        (notifier as? any SwitchFailureNotifying)?.showSwitchFailure(message)
+    private func logFailure(_ message: String) {
         Self.log.error("\(message, privacy: .public)")
     }
 }

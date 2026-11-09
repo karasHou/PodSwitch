@@ -1,6 +1,5 @@
 namespace PodSwitch.Core;
 
-/// <summary>Coordinates local Bluetooth switching and optional peer release over Tailscale.</summary>
 public sealed class Coordinator
 {
     private readonly ISettingsStore _settings;
@@ -65,13 +64,13 @@ public sealed class Coordinator
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(peerSettings.Host) || string.IsNullOrWhiteSpace(peerSettings.Token))
+            if (string.IsNullOrWhiteSpace(peerSettings.Host))
             {
-                ShowFailure("Configure the peer MagicDNS name and shared token first.");
+                ShowFailure("Configure the peer MagicDNS name first.");
                 return;
             }
 
-            var released = _peer is not null && await _peer.ReleasePeerAsync(peerSettings.Host, peerSettings.Port, peerSettings.Token);
+            var released = _peer is not null && await _peer.ReleasePeerAsync(peerSettings.Host, peerSettings.Port);
             if (!released)
             {
                 ShowFailure("Peer did not confirm headphone release. Switching cancelled.");

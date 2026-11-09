@@ -5,10 +5,10 @@ using System.Text;
 
 namespace PodSwitch.App.Platform;
 
-/// <summary>Small HTTP endpoint bound to the local Tailscale IPv4 address.</summary>
+/// <summary>HTTP endpoint bound to Tailscale IPv4 and restricted to the configured peer MagicDNS IP.</summary>
 internal sealed class PeerSwitchServer : IDisposable
 {
-    private readonly Func<string> _tokenProvider;
+    private readonly Func<string> _peerHostProvider;
     private readonly Func<Task<bool>> _releaseHandler;
     private TcpListener? _listener;
     private CancellationTokenSource? _stop;
@@ -16,9 +16,9 @@ internal sealed class PeerSwitchServer : IDisposable
     public bool IsRunning { get; private set; }
     public string? LastError { get; private set; }
 
-    public PeerSwitchServer(Func<string> tokenProvider, Func<Task<bool>> releaseHandler)
+    public PeerSwitchServer(Func<string> peerHostProvider, Func<Task<bool>> releaseHandler)
     {
-        _tokenProvider = tokenProvider;
+        _peerHostProvider = peerHostProvider;
         _releaseHandler = releaseHandler;
     }
 
@@ -88,7 +88,6 @@ internal sealed class PeerSwitchServer : IDisposable
                 var parts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 var method = parts.Length > 0 ? parts[0] : string.Empty;
                 var path = parts.Length > 1 ? parts[1] : string.Empty;
-                string? authorization = null;
                 var headerBytes = requestLine.Length;
                 for (var i = 0; i < 32; i++)
                 {
@@ -96,14 +95,12 @@ internal sealed class PeerSwitchServer : IDisposable
                     if (line is null || line.Length == 0) break;
                     headerBytes += line.Length;
                     if (headerBytes > 8192) throw new InvalidDataException("HTTP headers too large");
-                    if (line.StartsWith("Authorization:", StringComparison.OrdinalIgnoreCase))
-                        authorization = line[(line.IndexOf(':') + 1)..].Trim();
                 }
 
-                var expected = "Bearer " + _tokenProvider();
-                if (string.IsNullOrEmpty(_tokenProvider()) || !string.Equals(authorization, expected, StringComparison.Ordinal))
+                var remoteAddress = (client.Client.RemoteEndPoint as IPEndPoint)?.Address.MapToIPv4();
+                if (!IsAuthorizedPeer(remoteAddress, _peerHostProvider()))
                 {
-                    await RespondAsync(stream, 401, false, cancellationToken).ConfigureAwait(false);
+                    await RespondAsync(stream, 403, false, cancellationToken).ConfigureAwait(false);
                     return;
                 }
 
@@ -137,9 +134,23 @@ internal sealed class PeerSwitchServer : IDisposable
             }
             catch
             {
-                // The client may have disconnected; each request is isolated from the tray process.
+                // A disconnected peer must never terminate the tray process.
             }
         }
+    }
+
+    private static bool IsAuthorizedPeer(IPAddress? remoteAddress, string peerHost)
+    {
+        if (remoteAddress is null || !IsTailscaleIPv4(remoteAddress) || string.IsNullOrWhiteSpace(peerHost))
+            return false;
+
+        try
+        {
+            return Dns.GetHostAddresses(peerHost.Trim())
+                .Where(IsTailscaleIPv4)
+                .Any(address => address.Equals(remoteAddress));
+        }
+        catch { return false; }
     }
 
     private static async Task RespondAsync(NetworkStream stream, int status, bool success, CancellationToken cancellationToken)
@@ -148,7 +159,7 @@ internal sealed class PeerSwitchServer : IDisposable
         {
             200 => "OK",
             400 => "Bad Request",
-            401 => "Unauthorized",
+            403 => "Forbidden",
             404 => "Not Found",
             409 => "Conflict",
             _ => "Error"

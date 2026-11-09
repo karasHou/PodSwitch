@@ -1,6 +1,9 @@
 import Foundation
 import UserNotifications
+import os
 
+/// macOS keeps ASK prompts for local-only mode; cross-device mode forces Steal.
+/// Failure notifications are intentionally suppressed and written to unified logs.
 @MainActor
 public final class NotificationManager: NSObject, Notifying, SwitchFailureNotifying, @preconcurrency UNUserNotificationCenterDelegate {
     public var onAccept: (() -> Void)?
@@ -8,6 +11,7 @@ public final class NotificationManager: NSObject, Notifying, SwitchFailureNotify
     private static let categoryId = "PODSWITCH_SWITCH_PROMPT"
     private static let connectActionId = "PODSWITCH_CONNECT"
     private static let promptId = "PODSWITCH_PROMPT"
+    private static let log = Logger(subsystem: "com.podswitch.app", category: "Notifications")
 
     public override init() {
         super.init()
@@ -28,10 +32,7 @@ public final class NotificationManager: NSObject, Notifying, SwitchFailureNotify
     }
 
     public func showSwitchFailure(_ message: String) {
-        let content = UNMutableNotificationContent()
-        content.title = "PodSwitch"
-        content.body = message
-        center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        log.error("Switch notification suppressed: \(message, privacy: .public)")
     }
 
     public func userNotificationCenter(

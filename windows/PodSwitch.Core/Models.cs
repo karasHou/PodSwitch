@@ -10,16 +10,13 @@ public sealed record Config(
     IReadOnlySet<Category> EnabledCategories,
     string? TargetDeviceId);
 
-/// <summary>Remote peer settings. Both devices use the same shared bearer token.</summary>
-public sealed record PeerSettings(bool Enabled, string Host, int Port, string Token)
+/// <summary>The peer MagicDNS hostname is also the inbound Tailscale IP allowlist.</summary>
+public sealed record PeerSettings(bool Enabled, string Host, int Port)
 {
-    public static PeerSettings Disabled { get; } = new(false, string.Empty, 8765, string.Empty);
+    public static PeerSettings Disabled { get; } = new(false, string.Empty, 8765);
 }
 
-public sealed record DeviceStatus(
-    bool TargetPaired,
-    bool TargetActiveOutput,
-    bool NotificationPending);
+public sealed record DeviceStatus(bool TargetPaired, bool TargetActiveOutput, bool NotificationPending);
 
 public abstract record SwitchEvent
 {

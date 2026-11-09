@@ -3,7 +3,6 @@ using PodSwitch.Core;
 
 namespace PodSwitch.App;
 
-/// <summary>System-tray icon and application composition root.</summary>
 internal sealed class TrayApp : ApplicationContext
 {
     private readonly Control _uiAnchor = new();
@@ -24,7 +23,7 @@ internal sealed class TrayApp : ApplicationContext
         _notifier.AcceptRequested += () => _coordinator.Handle(new SwitchEvent.UserAcceptedSwitch());
 
         _peerServer = new PeerSwitchServer(
-            () => _settings.CurrentPeerSettings().Token,
+            () => _settings.CurrentPeerSettings().Host,
             async () =>
             {
                 var target = _settings.TargetDeviceId;
@@ -111,7 +110,7 @@ internal sealed class TrayApp : ApplicationContext
     {
         _peerServer.Stop();
         var peer = _settings.CurrentPeerSettings();
-        if (peer.Enabled && !string.IsNullOrWhiteSpace(peer.Token))
+        if (peer.Enabled && !string.IsNullOrWhiteSpace(peer.Host))
             _peerServer.Start(peer.Port);
     }
 

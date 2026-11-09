@@ -13,7 +13,6 @@ public interface IBluetoothConnector
     void Connect(string targetDeviceId);
 }
 
-/// <summary>Verified async Bluetooth operations used by cross-device switching.</summary>
 public interface IBluetoothHandoff : IBluetoothConnector
 {
     Task<bool> DisconnectAndWaitAsync(string targetDeviceId, CancellationToken cancellationToken = default);
@@ -22,8 +21,8 @@ public interface IBluetoothHandoff : IBluetoothConnector
 
 public interface IPeerSwitching
 {
-    Task<bool> ReleasePeerAsync(string host, int port, string token, CancellationToken cancellationToken = default);
-    Task<bool> CheckPeerAsync(string host, int port, string token, CancellationToken cancellationToken = default);
+    Task<bool> ReleasePeerAsync(string host, int port, CancellationToken cancellationToken = default);
+    Task<bool> CheckPeerAsync(string host, int port, CancellationToken cancellationToken = default);
 }
 
 public interface IPeerSettingsStore

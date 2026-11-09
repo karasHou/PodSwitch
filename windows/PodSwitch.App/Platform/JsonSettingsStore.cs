@@ -3,7 +3,6 @@ using PodSwitch.Core;
 
 namespace PodSwitch.App.Platform;
 
-/// <summary>JSON-file-backed settings store at %APPDATA%\PodSwitch\settings.json.</summary>
 internal sealed class JsonSettingsStore : ISettingsStore, IPeerSettingsStore
 {
     private static readonly string Dir =
@@ -22,7 +21,7 @@ internal sealed class JsonSettingsStore : ISettingsStore, IPeerSettingsStore
         public bool PeerEnabled { get; set; }
         public string PeerHost { get; set; } = string.Empty;
         public int PeerPort { get; set; } = 8765;
-        public string PeerToken { get; set; } = string.Empty;
+        // Legacy PeerToken is intentionally ignored; peer IP allowlisting replaces shared-token auth.
     }
 
     public JsonSettingsStore() => _state = Load();
@@ -37,7 +36,7 @@ internal sealed class JsonSettingsStore : ISettingsStore, IPeerSettingsStore
         lock (_lock)
         {
             var port = _state.PeerPort is > 0 and <= 65535 ? _state.PeerPort : 8765;
-            return new PeerSettings(_state.PeerEnabled, _state.PeerHost, port, _state.PeerToken);
+            return new PeerSettings(_state.PeerEnabled, _state.PeerHost, port);
         }
     }
 
@@ -58,7 +57,6 @@ internal sealed class JsonSettingsStore : ISettingsStore, IPeerSettingsStore
         s.PeerEnabled = settings.Enabled;
         s.PeerHost = settings.Host;
         s.PeerPort = settings.Port;
-        s.PeerToken = settings.Token;
     });
 
     private void Mutate(Action<Persisted> change)

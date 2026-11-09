@@ -1,6 +1,5 @@
 import Foundation
 
-/// UserDefaults-backed implementation of local and peer settings.
 @MainActor
 public final class Settings: SettingsStore, PeerSettingsProviding {
     private enum Key {
@@ -11,7 +10,6 @@ public final class Settings: SettingsStore, PeerSettingsProviding {
         static let peerEnabled = "podswitch.peer.enabled"
         static let peerHost = "podswitch.peer.host"
         static let peerPort = "podswitch.peer.port"
-        static let peerToken = "podswitch.peer.token"
     }
 
     private let defaults: UserDefaults
@@ -52,15 +50,14 @@ public final class Settings: SettingsStore, PeerSettingsProviding {
             return PeerSettings(
                 enabled: defaults.bool(forKey: Key.peerEnabled),
                 host: defaults.string(forKey: Key.peerHost) ?? "",
-                port: UInt16(rawPort > 0 && rawPort <= 65535 ? rawPort : 8765),
-                token: defaults.string(forKey: Key.peerToken) ?? ""
+                port: UInt16(rawPort > 0 && rawPort <= 65535 ? rawPort : 8765)
             )
         }
         set {
             defaults.set(newValue.enabled, forKey: Key.peerEnabled)
             defaults.set(newValue.host, forKey: Key.peerHost)
             defaults.set(Int(newValue.port), forKey: Key.peerPort)
-            defaults.set(newValue.token, forKey: Key.peerToken)
+            // Old peerToken defaults are intentionally ignored after switching to Tailscale peer-IP authentication.
         }
     }
 

@@ -18,15 +18,14 @@ public protocol BluetoothConnecting: Sendable {
     func connect(deviceId: String)
 }
 
-/// Async Bluetooth operations used by cross-device hand-off.
 public protocol BluetoothHandoff: BluetoothConnecting {
     func disconnectAndWait(deviceId: String) async -> Bool
     func connectAndWait(deviceId: String) async -> Bool
 }
 
 public protocol PeerSwitching: Sendable {
-    func releasePeer(host: String, port: UInt16, token: String) async -> Bool
-    func checkPeer(host: String, port: UInt16, token: String) async -> Bool
+    func releasePeer(host: String, port: UInt16) async -> Bool
+    func checkPeer(host: String, port: UInt16) async -> Bool
 }
 
 @MainActor

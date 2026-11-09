@@ -39,9 +39,22 @@ final class CoordinatorTests: XCTestCase {
         func showSwitchPrompt() { promptCount += 1 }
     }
 
-    final class FakeSettings: SettingsStore {
+    final class FakeSettings: SettingsStore, PeerSettingsProviding {
         var config: Config
-        init(_ config: Config) { self.config = config }
+        var peerSettings: PeerSettings
+        init(_ config: Config, peerSettings: PeerSettings = PeerSettings()) {
+            self.config = config
+            self.peerSettings = peerSettings
+        }
+    }
+
+    actor FakePeer: PeerSwitching {
+        private(set) var releaseCount = 0
+        func releasePeer(host: String, port: UInt16) async -> Bool {
+            releaseCount += 1
+            return true
+        }
+        func checkPeer(host: String, port: UInt16) async -> Bool { true }
     }
 
     private func makeConfig(
@@ -127,6 +140,33 @@ final class CoordinatorTests: XCTestCase {
             monitor.emit(.audioStarted(.media))
         }
         XCTAssertEqual(bt.connectCount, 0)
+    }
+
+    func testPeerModeOverridesAskAndSwitchesWithoutPrompt() async {
+        let bt = FakeBluetooth()
+        let monitor = FakeMonitor()
+        let notifier = FakeNotifier()
+        let settings = FakeSettings(
+            makeConfig(mode: .ask),
+            peerSettings: PeerSettings(enabled: true, host: "windows-pc.example.ts.net")
+        )
+        let peer = FakePeer()
+        let coordinator = Coordinator(
+            monitor: monitor,
+            bluetooth: bt,
+            peer: peer,
+            notifier: notifier,
+            settings: settings
+        )
+
+        monitor.emit(.audioStarted(.media))
+        try? await Task.sleep(for: .milliseconds(50))
+
+        let releaseCount = await peer.releaseCount
+        XCTAssertEqual(releaseCount, 1)
+        XCTAssertEqual(bt.connectCount, 1)
+        XCTAssertEqual(notifier.promptCount, 0)
+        XCTAssertFalse(coordinator.notificationPending)
     }
 
     // MARK: - Notify dispatch & pending stacking

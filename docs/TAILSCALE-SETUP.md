@@ -1,6 +1,8 @@
 # PodSwitch Tailscale setup
 
-This fork adds a small peer-to-peer hand-off channel for Bluetooth headphones. Each computer runs its own PodSwitch HTTP endpoint, bound to its Tailscale IPv4 address. When audio starts on one computer, it asks the other computer to release the selected headphones before connecting locally.
+This fork adds a peer-to-peer hand-off channel for single-connection Bluetooth headphones such as the Sony WH-1000XM3. Each computer runs a small HTTP endpoint bound to its Tailscale IPv4 address. The endpoint authenticates the caller by checking that its source IP exactly matches the IPv4 address resolved from the configured peer MagicDNS name.
+
+**No shared token, pairing code, cloud service, or account is required.**
 
 ## 1. Prepare Tailscale
 
@@ -19,8 +21,7 @@ Use the real Tailnet suffix shown in your Tailscale admin console. The example n
 3. Enable cross-device switching.
 4. Set **Peer MagicDNS** to the Mac's full MagicDNS name, such as `macbook.example.ts.net`.
 5. Keep the HTTP port at `8765`.
-6. Enter any shared secret, or click **Generate token** and **Copy token**. The token can be generated on either computer.
-7. Save the settings.
+6. Save the settings.
 
 ## 3. Configure PodSwitch on macOS
 
@@ -29,14 +30,13 @@ Use the real Tailnet suffix shown in your Tailscale admin console. The example n
 3. Enable Tailscale switching.
 4. Set **Peer MagicDNS** to the Windows computer's full MagicDNS name, such as `windows-pc.example.ts.net`.
 5. Keep the HTTP port at `8765`.
-6. Paste or enter exactly the same token used on Windows. You can also generate it on Mac and copy it back to Windows.
-7. Save, then use **Test connection**.
+6. Save, then use **Test connection**.
 
-Both computers must use exactly the same token and port. A short token such as `123` works for a temporary test, but use a randomly generated 32-byte token for normal use. Each computer's Peer MagicDNS field points to the other computer.
+**Each computer must enter the other computer's MagicDNS name.** The app resolves that name and only accepts requests whose Tailscale source IPv4 exactly matches the resolved peer address. Existing saved Token values are ignored by this version.
 
 ## 4. Windows Firewall
 
-The Windows endpoint binds to the Tailscale IPv4 address on TCP port 8765. If Windows Firewall blocks inbound traffic, open an elevated PowerShell and add a narrowly scoped rule:
+The Windows endpoint binds to the local Tailscale IPv4 address on TCP port 8765. The app also validates the exact remote peer IP. For an additional firewall restriction, obtain the Mac's Tailscale IPv4 address by running `tailscale ip -4` on the Mac, then run PowerShell as Administrator on Windows:
 
 ```powershell
 New-NetFirewallRule `
@@ -45,11 +45,11 @@ New-NetFirewallRule `
   -Action Allow `
   -Protocol TCP `
   -LocalPort 8765 `
-  -RemoteAddress 100.64.0.0/10 `
+  -RemoteAddress 100.100.100.100/32 `
   -Profile Any
 ```
 
-The rule only allows traffic sourced from Tailscale's IPv4 CGNAT range. To remove it later:
+Replace `100.100.100.100` with the actual Mac Tailscale IPv4 address. To remove the rule later:
 
 ```powershell
 Remove-NetFirewallRule -DisplayName "PodSwitch Tailscale peer"
@@ -60,19 +60,23 @@ On macOS, allow incoming connections for PodSwitch if the macOS application fire
 ## 5. Verify
 
 1. Confirm Tailscale shows both computers as connected.
-2. Open the PodSwitch peer settings on each computer and run **Test connection**. The result distinguishes a verified token (HTTP 200), a token mismatch (HTTP 401), DNS failure, and an unreachable peer.
-3. Start audio on Mac. Windows should release the XM3 before Mac connects.
-4. Start audio on Windows. Mac should release the XM3 before Windows connects.
+2. Open PodSwitch peer settings on both computers and run **Test connection**.
+3. A successful test means the peer service is reachable and the source IP matches the configured peer MagicDNS address.
+4. HTTP 403 means the receiving computer's Peer MagicDNS field does not resolve to the requester's Tailscale IPv4 address.
+5. HTTP 401 means the other computer is still running the old Token-authenticated version; update both computers.
+6. Start audio on Mac. Windows should release the XM3 before Mac connects.
+7. Start audio on Windows. Mac should release the XM3 before Windows connects.
 
-The test endpoint only checks reachability and the shared token. It does not disconnect the headphones.
+The test endpoint checks reachability and peer identity. It does not disconnect the headphones.
 
 ## Safety behaviour
 
-- The peer server only binds to the local Tailscale IPv4 address.
-- Every request requires the shared Bearer token.
+- Each server binds only to its local Tailscale IPv4 address.
+- Each request is accepted only from the exact peer IPv4 address resolved from the configured MagicDNS name.
 - The server exposes only `GET /health` and `POST /api/release`.
 - If the peer cannot be reached or does not confirm release, the initiating computer cancels its connection attempt.
-- Local duplicate switch events are ignored while a hand-off is already running.
-- No cloud server, database, or third-party relay is used.
+- On macOS, cross-device audio switching is automatic and silent. Failures are written to the macOS unified log.
+- Local duplicate switch events and duplicate release requests are guarded.
+- No cloud server, database, shared secret, or third-party relay is used.
 
-If Tailscale starts after PodSwitch, reopen the peer settings and save once to retry starting the local peer server. Keep the same port on both computers.
+If Tailscale starts after PodSwitch, reopen peer settings and save once to retry starting the local peer server. Keep the same port on both computers.

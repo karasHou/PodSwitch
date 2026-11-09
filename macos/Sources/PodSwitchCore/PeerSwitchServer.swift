@@ -2,19 +2,19 @@ import Foundation
 import Network
 import Darwin
 
-/// Authenticated HTTP release endpoint bound only to this Mac's Tailscale IPv4 address.
+/// HTTP release endpoint bound to Tailscale IPv4 and restricted to the configured peer MagicDNS IP.
 @MainActor
 public final class PeerSwitchServer {
     private var listener: NWListener?
-    private let tokenProvider: () -> String
+    private let peerHostProvider: () -> String
     private let releaseHandler: () async -> Bool
     public private(set) var isRunning = false
     public private(set) var lastError: String?
     public var onStateChange: (() -> Void)?
     private var releaseInProgress = false
 
-    public init(tokenProvider: @escaping () -> String, releaseHandler: @escaping () async -> Bool) {
-        self.tokenProvider = tokenProvider
+    public init(peerHostProvider: @escaping () -> String, releaseHandler: @escaping () async -> Bool) {
+        self.peerHostProvider = peerHostProvider
         self.releaseHandler = releaseHandler
     }
 
@@ -22,6 +22,7 @@ public final class PeerSwitchServer {
         guard listener == nil else { return }
         guard let address = Self.tailscaleIPv4(), let nwPort = NWEndpoint.Port(rawValue: port) else {
             lastError = "Tailscale IPv4 address not found"
+            onStateChange?()
             return
         }
 
@@ -34,7 +35,7 @@ public final class PeerSwitchServer {
                 connection.start(queue: .global(qos: .userInitiated))
                 connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, _ in
                     Task { @MainActor [weak self] in
-                        await self?.handle(data ?? Data(), connection: connection)
+                        await self?.handle(data ?? Data(), remoteEndpoint: connection.endpoint, connection: connection)
                     }
                 }
             }
@@ -61,6 +62,7 @@ public final class PeerSwitchServer {
             server.start(queue: .global(qos: .userInitiated))
         } catch {
             lastError = error.localizedDescription
+            onStateChange?()
         }
     }
 
@@ -70,9 +72,14 @@ public final class PeerSwitchServer {
         isRunning = false
     }
 
-    private func handle(_ data: Data, connection: NWConnection) async {
+    private func handle(_ data: Data, remoteEndpoint: NWEndpoint, connection: NWConnection) async {
         guard let request = String(data: data, encoding: .utf8) else {
             send(status: "400 Bad Request", success: false, on: connection)
+            return
+        }
+
+        guard Self.isAuthorizedPeer(remoteEndpoint, configuredPeerHost: peerHostProvider()) else {
+            send(status: "403 Forbidden", success: false, on: connection)
             return
         }
 
@@ -81,17 +88,6 @@ public final class PeerSwitchServer {
         let parts = first.split(separator: " ")
         let method = parts.first.map(String.init) ?? ""
         let path = parts.dropFirst().first.map(String.init) ?? ""
-        let authorization = lines.first(where: {
-            $0.lowercased().hasPrefix("authorization:")
-        }).map {
-            $0.dropFirst("authorization:".count).trimmingCharacters(in: .whitespaces)
-        } ?? ""
-        let expected = "Bearer \(tokenProvider())"
-
-        guard !tokenProvider().isEmpty, authorization == expected else {
-            send(status: "401 Unauthorized", success: false, on: connection)
-            return
-        }
 
         if method == "GET", path == "/health" {
             send(status: "200 OK", success: true, on: connection)
@@ -121,6 +117,46 @@ public final class PeerSwitchServer {
         })
     }
 
+    private static func isAuthorizedPeer(_ endpoint: NWEndpoint, configuredPeerHost: String) -> Bool {
+        guard case let .hostPort(host, _) = endpoint,
+              case let .ipv4(remoteAddress) = host else { return false }
+        let remote = String(describing: remoteAddress)
+        guard isTailscaleIPv4(remote) else { return false }
+        return resolvedTailscaleIPv4(configuredPeerHost).contains(remote)
+    }
+
+    private static func resolvedTailscaleIPv4(_ hostname: String) -> Set<String> {
+        let cleanHost = hostname.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanHost.isEmpty else { return [] }
+
+        var hints = addrinfo()
+        hints.ai_family = AF_INET
+        hints.ai_socktype = SOCK_STREAM
+        var result: UnsafeMutablePointer<addrinfo>?
+        let status = cleanHost.withCString { getaddrinfo($0, nil, &hints, &result) }
+        guard status == 0, let first = result else { return [] }
+        defer { freeaddrinfo(first) }
+
+        var addresses = Set<String>()
+        var current: UnsafeMutablePointer<addrinfo>? = first
+        while let item = current {
+            if let address = item.pointee.ai_addr {
+                var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(address, item.pointee.ai_addrlen, &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+                    let value = String(cString: host)
+                    if isTailscaleIPv4(value) { addresses.insert(value) }
+                }
+            }
+            current = item.pointee.ai_next
+        }
+        return addresses
+    }
+
+    private static func isTailscaleIPv4(_ value: String) -> Bool {
+        let octets = value.split(separator: ".").compactMap { Int($0) }
+        return octets.count == 4 && octets[0] == 100 && (64...127).contains(octets[1])
+    }
+
     private static func tailscaleIPv4() -> IPv4Address? {
         var head: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&head) == 0, let first = head else { return nil }
@@ -143,9 +179,7 @@ public final class PeerSwitchServer {
             )
             guard result == 0 else { continue }
             let value = String(cString: host)
-            let octets = value.split(separator: ".").compactMap { Int($0) }
-            guard octets.count == 4, octets[0] == 100, (64...127).contains(octets[1]),
-                  let ipv4 = IPv4Address(value) else { continue }
+            guard isTailscaleIPv4(value), let ipv4 = IPv4Address(value) else { continue }
             return ipv4
         }
         return nil
