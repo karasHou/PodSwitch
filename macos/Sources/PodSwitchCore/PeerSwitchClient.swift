@@ -2,7 +2,8 @@ import Foundation
 
 public enum PeerCheckResult: Equatable {
     case success
-    case unauthorized
+    case forbidden
+    case unauthorizedLegacy
     case notFound
     case serverError(Int)
     case unreachable(String)
@@ -11,11 +12,13 @@ public enum PeerCheckResult: Equatable {
     public var message: String {
         switch self {
         case .success:
-            return "连接成功：对端服务可达，Token 验证通过。"
-        case .unauthorized:
-            return "对端服务可达，但 Token 不匹配（HTTP 401）。请检查两端 Token 是否完全一致。"
+            return "连接成功：对端 Tailscale 身份验证通过。"
+        case .forbidden:
+            return "对端拒绝请求：请确认对端的 Peer MagicDNS 配置指向本机。"
+        case .unauthorizedLegacy:
+            return "对端仍使用旧版 Token 认证，请更新两台电脑的 PodSwitch。"
         case .notFound:
-            return "对端服务可达，但 API 路径不存在（HTTP 404）。请更新两端 PodSwitch。"
+            return "对端服务可达，但 API 路径不存在，请更新两台电脑的 PodSwitch。"
         case .serverError(let status):
             return "对端返回 HTTP \(status)，请检查对端服务状态。"
         case .unreachable(let reason):
@@ -31,31 +34,32 @@ public enum PeerCheckResult: Equatable {
     }
 }
 
-/// HTTP client for the peer endpoint over the private Tailscale network.
 public struct PeerSwitchClient: PeerSwitching {
     public init() {}
 
-    public func releasePeer(host: String, port: UInt16, token: String) async -> Bool {
-        let result = await request(host: host, port: port, token: token, path: "/api/release", method: "POST")
+    public func releasePeer(host: String, port: UInt16) async -> Bool {
+        let result = await request(host: host, port: port, path: "/api/release", method: "POST")
         return result.isSuccess
     }
 
-    public func checkPeer(host: String, port: UInt16, token: String) async -> Bool {
-        let result = await diagnose(host: host, port: port, token: token)
+    public func checkPeer(host: String, port: UInt16) async -> Bool {
+        let result = await diagnose(host: host, port: port)
         return result.isSuccess
     }
 
-    public func diagnose(host: String, port: UInt16, token: String) async -> PeerCheckResult {
+    public func diagnose(host: String, port: UInt16) async -> PeerCheckResult {
+        await request(host: host, port: port, path: "/health", method: "GET")
+    }
+
+    private func request(host: String, port: UInt16, path: String, method: String) async -> PeerCheckResult {
         let cleanHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanHost.isEmpty, !token.isEmpty,
-              let url = URL(string: "http://\(cleanHost):\(port)/health") else {
-            return .unreachable("MagicDNS 地址或 Token 为空")
+        guard !cleanHost.isEmpty,
+              let url = URL(string: "http://\(cleanHost):\(port)\(path)") else {
+            return .unreachable("Peer MagicDNS 为空或格式错误")
         }
 
         var request = URLRequest(url: url, timeoutInterval: 8)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
+        request.httpMethod = method
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { return .invalidResponse }
@@ -65,38 +69,14 @@ public struct PeerSwitchClient: PeerSwitching {
                       payload["success"] as? Bool == true else { return .invalidResponse }
                 return .success
             case 401:
-                return .unauthorized
+                return .unauthorizedLegacy
+            case 403:
+                return .forbidden
             case 404:
                 return .notFound
             default:
                 return .serverError(http.statusCode)
             }
-        } catch {
-            return .unreachable(error.localizedDescription)
-        }
-    }
-
-    private func request(host: String, port: UInt16, token: String, path: String, method: String) async -> PeerCheckResult {
-        let cleanHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanHost.isEmpty, !token.isEmpty,
-              let url = URL(string: "http://\(cleanHost):\(port)\(path)") else {
-            return .unreachable("MagicDNS 地址或 Token 为空")
-        }
-
-        var request = URLRequest(url: url, timeoutInterval: 10)
-        request.httpMethod = method
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else { return .invalidResponse }
-            guard http.statusCode == 200 else {
-                if http.statusCode == 401 { return .unauthorized }
-                if http.statusCode == 404 { return .notFound }
-                return .serverError(http.statusCode)
-            }
-            guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  payload["success"] as? Bool == true else { return .invalidResponse }
-            return .success
         } catch {
             return .unreachable(error.localizedDescription)
         }
