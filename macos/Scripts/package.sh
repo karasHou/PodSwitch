@@ -74,9 +74,30 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
     <true/>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>PodSwitch connects to your paired Bluetooth device when audio starts.</string>
+    <!--
+      The peer API uses plain HTTP only inside the encrypted Tailscale WireGuard
+      network. Scope the ATS exception to Tailscale MagicDNS names (*.ts.net);
+      all other hosts continue to require HTTPS.
+    -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSExceptionDomains</key>
+        <dict>
+            <key>ts.net</key>
+            <dict>
+                <key>NSIncludesSubdomains</key>
+                <true/>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+            </dict>
+        </dict>
+    </dict>
 </dict>
 </plist>
 PLIST
+
+# Validate the generated bundle metadata before signing.
+plutil -lint "${APP_DIR}/Contents/Info.plist"
 
 # Ad-hoc sign inside-out (framework, then bundle) so the signature seals
 # resources. Without it the unsealed bundle reads as "damaged" once quarantined.
