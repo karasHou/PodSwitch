@@ -1,6 +1,6 @@
 # PodSwitch Tailscale setup
 
-This fork adds a peer-to-peer hand-off channel for single-connection Bluetooth headphones such as the Sony WH-1000XM3. Each computer runs a small HTTP endpoint bound to its Tailscale IPv4 address. The endpoint authenticates the caller by checking that its source IP exactly matches the IPv4 address resolved from the configured peer MagicDNS name.
+This fork adds a peer-to-peer hand-off channel for single-connection Bluetooth headphones such as the Sony WH-1000XM3. Each computer runs a small HTTP endpoint bound to its Tailscale IPv4 address. The endpoint authenticates the caller by checking that its source IP exactly matches the IPv4 address resolved from the configured peer MagicDNS name. The macOS app includes a narrowly scoped App Transport Security exception for the `.ts.net` MagicDNS domain because this HTTP traffic is carried inside Tailscale's encrypted WireGuard tunnel. HTTPS remains required for all other domains.
 
 **No shared token, pairing code, cloud service, or account is required.**
 
